@@ -1,6 +1,8 @@
 <p align="center">
-  <img src="logo.png" alt="BugHunter" width="280"/>
+  <img src="toolkit/logo.png" alt="BugHunter" width="280"/>
 </p>
+
+> **📁 Structure:** `Bug Bounty Reports/` — curated collection of 188+ public bug bounty writeups · `toolkit/` — original project source (agent, brain, engine, installers, etc.)
 
 <h1 align="center">BugHunter</h1>
 
