@@ -11,7 +11,7 @@
 ### In Scope (bounty-eligible wildcards/URLs)
 | Asset | Category | Bounty |
 |-------|----------|--------|
-| `*.8x8.vc` | WILDCARD | Yes |
+| `*.8x8.vc` | WILDCARD | **Yes** ✅ |
 | `*.8x8cloud.net` | WILDCARD | Yes |
 | `*.8x8staging.com` | WILDCARD | Yes |
 | `*.chalet.8x8.com` | WILDCARD | Yes |
@@ -23,13 +23,28 @@
 | `connect.8x8.com` | URL | Yes |
 | `Virtual Office Desktop` | BINARY | Yes |
 | `8x8 Communication APIs` | URL | Yes |
-| Intellectual Property on Public Domains | OTHER | Yes |
+| `Intellectual Property on Public Domains` | OTHER | Yes |
 
 ### In Scope (recognition only — NO bounty)
 - `*.8x8.com` (includes vcc-ce.8x8.com), `*.8x8.co.uk`, `*.8x8.id`, etc.
+- `*.jitsi.net` — includes TURN relay `prod-8x8-turnrelay-oracle.jitsi.net` (leaked via 8x8.vc but not directly attacked)
 
 ### Out of Scope
-- mavenlab.*, moobicast.com, moobidesk, msteams, Jitsi Meet, etc.
+- mavenlab.*, moobicast.com, moobidesk, msteams, Jitsi Meet (upstream project), meet.jit.si
+
+### Recent scope changes (since notes.md written)
+| Date | Change | Asset | Bounty |
+|------|--------|-------|--------|
+| Apr 28 | Added | `*.preview.8x8.vc` | No |
+| Apr 28 | Added | `*.ai.8x8.vc` | No |
+| May 29 | Added | `resolve.8x8.com` | No |
+| May 29 | Added | `admin-resolve.8x8.com` | No |
+| May 29 | Removed | `video-agent.8x8.com` | — |
+| May 29 | Removed | `converse.8x8.com` | — |
+| Jun 14 | Added | `*.8x8.studio` | No |
+| Jun 14 | Added | `pubtools.private.8x8cloud.net` | No |
+
+**Verified at:** https://bbscope.com/program/h1/8x8-bounty — Program actively managed (last update Jun 14, 2026)
 
 ## Tech Stack
 

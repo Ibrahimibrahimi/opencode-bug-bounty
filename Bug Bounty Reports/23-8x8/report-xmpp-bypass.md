@@ -32,6 +32,35 @@ The `https://8x8.vc/http-bind` endpoint, which serves as the XMPP BOSH gateway f
 - **Account/role used:** None — fully unauthenticated (ANONYMOUS SASL)
 - **Date tested:** 2026-07-05 (multiple runs)
 
+## Program Scope Verification
+
+The 8x8 bounty program on HackerOne (@8x8-bounty) was verified on 2026-07-05. Below is the exact scope status of all domains referenced in this report.
+
+### Primary target: `8x8.vc` / `*.8x8.vc`
+
+| Status | Detail |
+|--------|--------|
+| **In scope** | ✅ Yes — `*.8x8.vc` is a WILDCARD asset |
+| **Bounty-eligible** | ✅ **Yes** |
+| Last scope update | Program actively maintained — most recent scope change: Jun 14, 2026 |
+
+### Other in-scope assets (bounty-eligible, not tested)
+
+`*.8x8cloud.net`, `*.8x8staging.com`, `*.chalet.8x8.com`, `*.p8t.us`, `*.packet8.net`, `*.wavecell.com`, `admin.8x8.com`, `apps.8x8.com`, `connect.8x8.com`, `Virtual Office Desktop` (binary), `8x8 Communication APIs`, `Intellectual Property on Public Domains`
+
+### Assets referenced by this report but NOT tested as targets
+
+| Domain | Scope | Bounty | Why referenced |
+|--------|-------|--------|----------------|
+| `*.jitsi.net` (specifically `prod-8x8-turnrelay-oracle.jitsi.net`) | In scope | **No** (recognition only) | The TURN relay hostname and credentials leak **from** the `8x8.vc` bind response. We are not attacking `jitsi.net` — its credentials are disclosed through the `8x8.vc` vulnerability. This is evidence of impact, not a separate target. |
+| `prod-8x8-turnrelay-oracle.jitsi.net` | Covered by `*.jitsi.net` | No | Leaked credential destination; STUN binding confirmed reachable |
+| `sso.8x8.com` | Recognition only (`*.8x8.com`) | No | Referenced in `config.js` as SSO endpoint; not attacked |
+| `api2.amplitude.com` | Third-party | No | Leaked API key destination; event injection confirmed but this is a third-party service |
+
+### Out-of-scope confirmation
+
+The following are explicitly out of scope and were **never targeted**: `meet.jit.si`, `mavenlab.*`, `moobicast.com`, `moobidesk`, `msteams`, upstream `Jitsi Meet` project.
+
 ## Affected Asset(s)
 
 - **Endpoint:** `POST https://8x8.vc/http-bind`
@@ -445,6 +474,7 @@ None of these four factors individually is a vulnerability in isolation, but the
 - Do other in-scope wildcards (`*.8x8staging.com`, `*.8x8cloud.net`, `*.wavecell.com`) run similar Prosody configurations with weaker security? Not tested.
 - Are anonymous XMPP sessions logged differently from authenticated ones, potentially hindering incident response? Not verifiable externally.
 - How many concurrent anonymous sessions are allowed per source IP? Rate limiting was observed (`item-not-found` after multiple sequential sessions) but the exact threshold is unknown.
+- **`*.jitsi.net` scope note:** The TURN relay `prod-8x8-turnrelay-oracle.jitsi.net` is covered by `*.jitsi.net` (recognition-only, no bounty). However, this relay is not our target — it is the destination of credentials leaked through the bounty-eligible `*.8x8.vc` endpoint. The vulnerability exists wholly within `*.8x8.vc`; the credential leak is evidence of impact, not a separate report.
 
 ## Timeline
 
