@@ -699,8 +699,36 @@ Anti-Phishing Code: Ilovebumba
 | 13 | admin.status.bumba.global runs nginx/1.27.2 (not Cloudflare) | Infrastructure | LOW | Unfixed |
 | 14 | ws-dev.bumba.global runs nginx/1.24.0 Ubuntu (direct origin) | Infrastructure | MEDIUM | Unfixed |
 | 15 | Fireblocks/treasury 530 errors expose DNS configs | Info Disclosure | LOW | Unfixed |
+| 16 | AWS Cognito Hosted UI at fns-login.bumba.global | Identity | MEDIUM | Unfixed |
 
 ---
+
+### Phase 8: AWS Cognito Discovery
+
+**URL:** `https://fns-login.bumba.global/`
+
+**Confirmed Identity Provider:** Amazon Cognito Hosted UI
+
+**Evidence:**
+- `AmazonCognitoAdvancedSecurityData` JS SDK in page source
+- CloudFront distribution `dgay0d1ozp68.cloudfront.net` serves Cognito assets (`cognito-login.css`)
+- Error page at `/error?error=Client+does+not+exist` confirms Cognito client validation
+- 30+ client IDs tested all redirect to same error (validated server-side)
+
+**Page:** `https://fns-login.bumba.global/` — returns 200 with `<title>Signin</title>`
+
+**Cognito JavaScript SDK functions observed:**
+```javascript
+AmazonCognitoAdvancedSecurityData.getData(username, userPoolId, clientId)
+getUrlParameter("client_id")
+```
+
+**Attack Surface:**
+- Potential account enumeration via forgot-password / signup flows
+- Redirect URI validation bypass if misconfigured
+- Phishing via unbranded Cognito login UI
+- Cognito direct domain not exposed (behind Cloudflare — could be found via DNS history)
+- CloudFront distribution `dgay0d1ozp68.cloudfront.net` serves Cognito static assets (potential Cognito user pool region leak via CloudFront geography)
 
 ## Attack Vectors for Exploitation
 
@@ -740,3 +768,9 @@ Approval system for withdrawals could have race conditions or bypasses.
 8. Test for SSTI/Prototype Pollution in Next.js
 9. SSRF testing via the `http://localhost:*` CSP allowance (if we find a vector)
 10. Check if `/admin.status.bumba.global` (nginx/1.27.2) has known CVEs
+11. **AWS Cognito exploitation:**
+    - Find direct Cognito domain (DNS history / CloudFront probe)
+    - Test forgot-password flow for account enumeration
+    - Test signup flow for unauthorized registration
+    - Probe redirect URI validation
+    - Check if Cognito host is accessible without Cloudflare

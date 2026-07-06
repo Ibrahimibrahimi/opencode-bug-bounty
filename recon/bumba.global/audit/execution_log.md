@@ -166,6 +166,48 @@ Committed + pushed to `origin/main`
 
 ---
 
+### T+01:15 — Optimized Parallel Test Suite (70% resource)
+**Tool:** `/tmp/optimized_bomba.py` — Python3 + concurrent.futures (8 workers)
+**Duration:** 29.2s — 128 requests
+
+**Tasks executed in parallel:**
+1. Admin API path variants (30 paths, 2 domains)
+2. Rate limit bypass (10 header injection techniques)
+3. SSRF via CSP (`localhost` host header injection)
+4. Spring Boot actuator sweep (5 hosts × 10 paths)
+5. WebSocket HTTP upgrade test
+6. Fireblocks origin IP resolution (DNS)
+7. Sandbox/FNS hidden page discovery
+
+**Key finding:** `fns-login.bumba.global/login` → **302 redirect to `/error?error=Client+does+not+exist`** — FNS is AWS Cognito!
+
+---
+
+### T+01:20 — AWS Cognito Discovery
+**Tool:** curl + grep
+
+**Confirmed:** `fns-login.bumba.global` is an **Amazon Cognito Hosted UI**
+- Uses `AmazonCognitoAdvancedSecurityData` JS SDK
+- Bootstrap/Cognito CSS loaded from CloudFront: `dgay0d1ozp68.cloudfront.net`
+- Client IDs return 302 → `/error?error=Client+does+not+exist`
+- All 30 tested client IDs redirect to same error (Cognito validates client_id server-side)
+- Behind Cloudflare proxy (no direct Cognito domain exposed)
+
+**Attack surface:** Cognito user pool potentially vulnerable to:
+- Account enumeration (forgot-password / signup flows)
+- Redirect URI validation bypass (if misconfigured)
+- Credential phishing (Cognito hosted UI is unbranded)
+- Direct Cognito domain: not publicly exposed (hidden behind Cloudflare)
+
+---
+
+### T+01:25 — WebSocket Test
+**Tool:** Python3 + websockets library
+**Result:** Connection to `wss://ws-dev.bumba.global` failed (timeout — no response on WebSocket upgrade)
+**Notes:** WS endpoint requires auth ticket via `POST /api/v1/auth/ws-ticket` (returns 401 without auth)
+
+---
+
 ## Resource Utilization
 
 | Metric | Total | 70% Allocation | Used |
