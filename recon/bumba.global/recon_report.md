@@ -359,13 +359,384 @@ HACKERONE:           https://hackerone.com/bumba_bbp
 
 ---
 
+---
+
+## Deep Attack Phase (2026-07-06)
+
+### Phase 1: Deep API Testing (124 tests)
+
+Executed systematic testing of all discovered endpoints with custom Python PoC.
+
+#### Key Response Codes Map
+
+| Endpoint | Method | Status | Notes |
+|---|---|---|---|
+| `/api/v1/auth/login` | POST | 403 | Cloudflare WAF blocks direct API login |
+| `/api/v1/auth/register` | POST | 403 | Cloudflare WAF blocks registration |
+| `/api/v1/auth/google/status` | GET | 200 | `{"enabled": true}` — Google SSO enabled |
+| `/api/v1/auth/logout` | POST | 401 | Requires auth |
+| `/api/v1/auth/forgot-password` | POST | 403 | CAPTCHA required (`CAPTCHA_REQUIRED`) |
+| `/api/v1/auth/ws-ticket` | POST | 401 | Auth required (for WebSocket) |
+| `/api/v1/health` | GET | 200 | `{"status":"ok","service":"api-gateway"}` |
+| `/api/v1/metrics` | GET | **200** | **Prometheus metrics LEAKED — NO AUTH!** |
+| `/api/v1/markets` | GET | 200 | 15 trading pairs (BTC-USDT, ETH-USDT, etc.) |
+| `/api/v1/markets/:symbol/orderbook` | GET | 200 | Live orderbook data |
+| `/api/v1/markets/:symbol/ticker` | GET | 200 | Live ticker data |
+| `/api/v1/markets/:symbol/trades` | GET | 200 | Recent trades |
+| `/api/v1/markets/:symbol/candles` | GET | 200 | OHLCV data |
+| `/api/v1/markets/tickers` | GET | 200 | All tickers at once |
+| `/api/v1/fees/network` | GET | **200** | **Unauthenticated — returns withdrawal fees!** |
+| `/api/v1/users/me` | GET | 401 | Auth required |
+| `/api/v1/users/me/activity` | GET | 401 | Auth required |
+| `/api/v1/users/me/addresses` | GET | 401 | Auth required |
+| `/api/v1/alerts` | GET | 401 | Auth required |
+| `/api/v1/notifications` | GET | 401 | Auth required |
+| `/api/v1/notifications/unread-count` | GET | 401 | Auth required |
+| `/api/v1/accounts/balances` | GET | 401 | Auth required |
+| `/api/v1/accounts/transactions` | GET | 401 | Auth required |
+| `/api/v1/conversions/health` | GET | 401 | Auth required |
+| `/api/v1/referrals/codes` | GET | 401 | Auth required |
+| `/api/v1/orders` | GET | 401 | Auth required |
+| `/api/v1/wallet` | GET | 404 | Not found on this API path |
+| `/api/v1/.env` | GET | 403 | Blocked (exists) |
+| `/actuator/health` | GET | 404 | Not exposed on public API |
+
+#### Rate Limiting Discovery
+
+- **5 failed login attempts** → 429 rate limited
+- After rate limit: all requests return 429 for ~60s cooldown
+- Rate limit is IP-based and endpoint-specific
+- Rate limit response headers: `Retry-After`, `X-RateLimit-*` exposed via CORS
+
+#### CORS Configuration
+
+- Only `https://bumba.global` allowed as origin
+- `Access-Control-Allow-Credentials: true`
+- Custom headers exposed: `X-BEX-Key`, `X-BEX-Signature`, `X-BEX-Timestamp`, `X-Withdrawal-Token`, `X-SMS-OTP-Token`, `X-Device-Fingerprint`, `X-Turnstile-Token`, `X-Correlation-ID`, `X-Encrypted`, `X-Idempotency-Key`
+
+#### User Enumeration
+
+Login responses differ based on user existence:
+- Non-existent user (`test@test.com`): **403** (blocked by WAF before API)
+- Possibly existing user (`admin@bumba.global`): **401** (reaches API, wrong password)
+- Non-existent + rate limited: **429** (different error path)
+
+---
+
+### Phase 2: GitHub Dorking Results
+
+#### Critical Find: Public Gist Leak
+
+**Gist by user `atpeny`**: `https://gist.github.com/atpeny/e9fea2381bf49ee8770d1ed3007a30ea`
+
+This publicly leaked gist contains the **complete internal subdomain enumeration** for `bumba.global`, revealing significant internal infrastructure:
+
+```
+middleware-api.bumba.global
+middleware-api-sandbox1.bumba.global
+middleware-api-sandbox.bumba.global
+treasury-api.bumba.global
+treasury-api-v2.bumba.global
+treasury-api-sandbox.bumba.global
+treasury.bumba.global
+treasury-sandbox.bumba.global
+treasury-sandbox-login.bumba.global
+fireblocks-api.bumba.global
+fireblocks-mainnet.bumba.global
+fireblocks-testnet.bumba.global
+coinbase-hedging-adapter.bumba.global
+b2c2-hedging-adapter.bumba.global
+exchange-api.bumba.global
+auth.bumba.global
+sandbox-auth.bumba.global
+admin.bumba.global
+admin-sandbox.bumba.global
+elk.bumba.global              (ELK Stack / Kibana)
+eramba.bumba.global           (GRC platform)
+redmine.bumba.global          (Project management)
+tcms.bumba.global             (Test case management)
+fns-login.bumba.global        (FNS login portal)
+mm.bumba.global               (Market maker)
+status.bumba.global           (Status page)
+admin.status.bumba.global     (Admin status)
+email.bumba.global            (Email/Microsoft 365)
+sip.bumba.global              (Skype/SIP)
+lyncdiscover.bumba.global     (Lync discovery)
+autodiscover.bumba.global     (Exchange autodiscover)
+msoid.bumba.global            (Microsoft Office 365)
+tm.bumba.global               (?)
+sandbox1.bumba.global         (?)
+www.bumba.global              (Redirect to bumba.global)
+```
+
+---
+
+### Phase 3: Subdomain Deep Scan
+
+All subdomains behind Cloudflare (104.26.10.128, 104.26.11.128, 172.67.69.169).
+
+| Subdomain | Status | Notes |
+|---|---|---|
+| `api.bumba.global` | 404 | NestJS API (no root route) |
+| `admin.bumba.global` | 200 | **Separate Next.js app** (build: `nYOGuq3VQ0VnnzG7rP_Wr`) |
+| `auth.bumba.global` | 302 | Redirects to `https://auth-dev.bumba.global/admin/` |
+| `sandbox-auth.bumba.global` | 200 | Empty page (sandbox auth portal) |
+| `fns-login.bumba.global` | 200 | Empty page (FNS login) |
+| `status.bumba.global` | 200 | **Status page in Portuguese** (see below) |
+| `fireblocks-api.bumba.global` | **530** | Origin DNS error |
+| `fireblocks-mainnet.bumba.global` | **530** | Origin DNS error |
+| `fireblocks-testnet.bumba.global` | **530** | Origin DNS error |
+| `b2c2-hedging-adapter.bumba.global` | **503** | Service unavailable |
+| `treasury-sandbox-login.bumba.global` | **530** | Origin DNS error |
+| `email.bumba.global` | **526** | Invalid SSL cert |
+| `autodiscover.bumba.global` | **521** | Web server down |
+| `admin.status.bumba.global` | 403 | nginx/1.27.2 (different from Cloudflare!) |
+| `ws-dev.bumba.global` | 301 | nginx/1.24.0 (Ubuntu) — non-Cloudflare origin |
+| `www.bumba.global` | 301 | Redirect to `https://bumba.global` |
+| `msoid.bumba.global` | 302 | Redirect to `https://www.office.com/login` |
+| `tcms`, `redmine`, `elk`, `eramba`, `sip`, `exchange-api`, `tm`, `sandbox1` | TIMEOUT | Internal only (no external DNS) |
+
+**Key Insight**: Fireblocks subdomains return Cloudflare error 530 (origin DNS failure) — the DNS records exist but the origin servers are not configured. This indicates either sandbox/test environments that were never completed, or origin servers that have been taken down but DNS records remain.
+
+**B2C2 Hedging Adapter**: 503 suggests B2C2 integration (crypto OTC liquidity provider) exists but service is currently unavailable.
+
+---
+
+### Phase 4: Prometheus Metrics Leak (CRITICAL)
+
+**Endpoint**: `GET /api/v1/metrics` — **NO AUTHENTICATION REQUIRED**
+
+Full Prometheus metrics exposed, leaking:
+
+1. **Complete API route map** (all parameterized routes):
+   - `/api/v1/accounts/balances`
+   - `/api/v1/accounts/transactions`
+   - `/api/v1/alerts`
+   - `/api/v1/auth/google/status`
+   - `/api/v1/auth/login`
+   - `/api/v1/conversions/health`
+   - `/api/v1/fees/network`
+   - `/api/v1/health`
+   - `/api/v1/markets`
+   - `/api/v1/markets/:symbol`
+   - `/api/v1/markets/:symbol/candles`
+   - `/api/v1/markets/:symbol/orderbook`
+   - `/api/v1/markets/:symbol/ticker`
+   - `/api/v1/markets/:symbol/trades`
+   - `/api/v1/markets/tickers`
+   - `/api/v1/metrics`
+   - `/api/v1/notifications`
+   - `/api/v1/notifications/unread-count`
+   - `/api/v1/referrals/codes`
+   - `/api/v1/users/me`
+
+2. **Node.js version**: `v22.22.3`
+
+3. **Request volume per endpoint** (historical data):
+   - `/api/v1/markets/:symbol/ticker`: 5146 requests
+   - `/api/v1/health`: 131 requests
+   - `/api/v1/auth/google/status`: 34 requests
+   - `/api/v1/metrics`: 30 requests
+   - `/api/v1/auth/login`: 5 requests (1x 200, 2x 400, 1x 401, 1x 403)
+   - `/api/v1/auth/register`: **1 successful registration (201)**
+   - `/api/v1/auth/forgot-password`: **1 request (200)**
+   - `/api/v1/auth/ws-ticket`: **1 request (200)**
+
+4. **Performance data**: P50/P90/P99 latency, GC stats, heap usage, event loop lag
+
+5. **Process info**: Start time (`2026-07-05T23:36:07Z`), CPU, memory, open FDs
+
+6. **Service name**: `api-gateway` (metrics prefix: `exchange_`)
+
+**Severity**: HIGH — leaks internal API structure, request patterns, and performance data
+
+---
+
+### Phase 5: Admin Dashboard Deep Dive
+
+Admin subdomain (`admin.bumba.global`) runs a **separate Next.js application** with build ID `nYOGuq3VQ0VnnzG7rP_Wr` (main site uses `JMBLCYqoyu9s7Ov5Q58b`).
+
+#### Admin Pages (22 routes from JS layout):
+
+| Category | Pages |
+|---|---|
+| **Main** | Dashboard, Participants, Users, Orders, Trades, Order Book, Balances |
+| **Operations** | Positions, Risk, Treasury, Symbols, Kill Switch |
+| **Finance** | Deposits, Fee Management, Withdrawal Fees |
+| **Compliance** | KYC Review, Approvals, Withdrawals, AML Alerts, System Alerts |
+| **System** | Services, Audit Logs, Settings |
+
+All return 200 (Next.js shell rendered) with authentication redirect:
+
+```
+/dashboard  200  /users  200  /settings  200  /treasury  200
+/trades     200  /orders  200  /withdrawals  200  /deposits  200
+```
+
+The `/me/*` rewrite paths return 403 (proxied to backend, requires admin token):
+```
+/me/participants  403  /me/users  403  /me/orders  403
+/me/treasury      403  /me/kill-switch  403  /me/kyc  403
+```
+
+`/treasury-api/` and `/pms-api/` return 308 redirect (permanent redirect — separate services proxied through admin domain).
+
+#### Admin Authentication (from JS analysis)
+
+- **Endpoint**: `POST /api/v1/participants/auth/login` (different from user `/auth/login`)
+- **Credentials**: `participantId` + `password`
+- **Access**: `SUPER_ADMIN` or `SYSTEM` role only
+- **Token storage**: `sessionStorage` key `adminToken` (with localStorage fallback)
+- **CSRF**: `crypto.randomUUID()`, stored in `sessionStorage` key `csrfToken`, sent as `X-CSRF-Token` header
+- **Session expiry**: 8 hours (hardcoded), warning at 15 minutes before expiry
+- **Auth header**: Bearer token
+
+#### Backend Architecture (from JS client library ~80+ methods)
+
+```mermaid
+graph TD
+    A[admin.bumba.global - Next.js] --> B[api.bumba.global - NestJS API Gateway]
+    B --> C[Admin API: /api/v1/admin]
+    B --> D[Hedging API: /api/v1/hedge]
+    B --> E[Market Maker API: /api/v1/mm]
+    C --> F[Participants CRUD]
+    C --> G[Users CRUD + KYC]
+    C --> H[Orders + Trades]
+    C --> I[Balances + Transfers]
+    C --> J[Deposits + Withdrawals]
+    C --> K[Fees config]
+    C --> L[Dual Control Approvals]
+    C --> M[System Alerts + Audit Logs]
+    C --> N[Kill Switch + Circuit Breakers]
+    D --> O[Hedging: exposure, quotes, limits, auto-hedge]
+    E --> P[Market Making: fair values, spread, inventory, volatility]
+```
+
+#### RBAC Permissions (13 roles)
+
+| Role | Level |
+|---|---|
+| `CLIENT`, `MAKER`, `TAKER`, `BOTH`, `BROKER` | Trading roles |
+| `OPERATOR` | Operations |
+| `COMPLIANCE` | KYC/AML |
+| `APPROVER` | Dual control |
+| `TREASURY_ADMIN` | Treasury |
+| `RISK_MANAGER` | Risk |
+| `MARKET_OPERATOR` | Market operations |
+| `ADMIN`, `SYSTEM`, `SUPER_ADMIN` | Top-level |
+
+**SUPER_ADMIN permissions** (~55+): `MANAGE_ADMIN_USERS`, `MANAGE_WALLETS`, `EXECUTE_TRANSFERS`, `EXECUTE_HEDGES`, `TRIGGER_LIQUIDATION`, `MANAGE_CIRCUIT_BREAKERS`, etc.
+
+#### Matching Engine
+
+- **Spring Boot** backend (referenced `/actuator/health`)
+- Latency monitoring in ns/µs/ms with P99 tracking
+- System resources monitored: CPU%, Memory%, Disk%, Network I/O
+- gRPC available (not implemented on frontend)
+
+---
+
+### Phase 6: Status Page Intelligence
+
+**URL**: `https://status.bumba.global` (Portuguese)
+
+```
+Status da Plataforma | Bumba
+Manutenção Programada em Andamento
+
+Migração para a nova Bumba Core
+Janela: 17/06/2026 22:00 a 28/06/2026 23:59 (BRT)
+
+Componentes:
+- Negociação (Trading): Em manutenção
+- Custódia de Ativos: Operacional
+- Login e Consulta de Saldos: Operacional
+- Saques: Disponível (assistido)
+- Site e Aplicativo: Operacional
+
+Anti-Phishing Code: Ilovebumba
+```
+
+**Key Intel**:
+- Exchange is mid-migration (June 17-28, 2026) to proprietary "Bumba Core" system
+- Trading paused, withdrawals available with verification
+- Anti-phishing code leaked: `Ilovebumba` (user's personal identifier)
+- Support email: suporte@bumba.global
+
+---
+
+### Phase 7: Withdrawal Fee Structure (Unauthenticated)
+
+**Endpoint**: `GET /api/v1/fees/network?asset=BTC`
+**Status**: **200 — NO AUTH REQUIRED**
+
+| Asset | Network | Fee | Fee (USD) | Est. Time | Congestion |
+|---|---|---|---|---|---|
+| BTC | bitcoin | 0.0001 BTC | $2.12 | 30 min | medium |
+| USDT | ethereum | 5 USDT | $5.00 | 5 min | medium |
+| USDT | tron | 1 USDT | $1.00 | 3 min | low |
+| USDT | polygon | 0.5 USDT | $0.50 | 2 min | low |
+| USDT | solana | 1 USDT | $0.01 est. | 1 min | low |
+
+---
+
+### Vulnerability Summary
+
+| # | Finding | Type | Severity | Status |
+|---|---|---|---|---|
+| 1 | Prometheus metrics exposed without auth | Info Disclosure | HIGH | Unfixed |
+| 2 | GitHub gist leak of internal subdomains | Info Disclosure | HIGH | Public |
+| 3 | Withdrawal fee endpoint unauthenticated | Info Disclosure | LOW | Unfixed |
+| 4 | Admin panel RBAC matrix exposed in JS | Info Disclosure | MEDIUM | Unfixed |
+| 5 | Full API route map leaked via /metrics | Info Disclosure | HIGH | Unfixed |
+| 6 | Node.js version disclosed (v22.22.3) | Info Disclosure | LOW | Unfixed |
+| 7 | Process start time leaked | Info Disclosure | LOW | Unfixed |
+| 8 | auth.bumba.global redirects expose dev subdomain | Info Disclosure | MEDIUM | Unfixed |
+| 9 | CSP allows 'unsafe-eval' + 'unsafe-inline' | XSS Risk | HIGH | Unfixed |
+| 10 | CSP allows http://localhost:* connections | SSRF Risk | MEDIUM | Unfixed |
+| 11 | Anti-phishing code visible in status page | Privacy | MEDIUM | Unfixed |
+| 12 | Rate limiting: different responses for existent vs non-existent users | User Enumeration | LOW | Unfixed |
+| 13 | admin.status.bumba.global runs nginx/1.27.2 (not Cloudflare) | Infrastructure | LOW | Unfixed |
+| 14 | ws-dev.bumba.global runs nginx/1.24.0 Ubuntu (direct origin) | Infrastructure | MEDIUM | Unfixed |
+| 15 | Fireblocks/treasury 530 errors expose DNS configs | Info Disclosure | LOW | Unfixed |
+
+---
+
+## Attack Vectors for Exploitation
+
+### 1. SSRF via CSP `connect-src http://localhost:*`
+The CSP allows WebSocket and HTTP connections to localhost on any port. If XSS is achieved or if the admin panel has an SSRF-vulnerable feature:
+```
+connect-src 'self' wss: ws: http://localhost:* https://*.bumba.global
+```
+Could be used to access internal services on localhost.
+
+### 2. XSS via `'unsafe-eval'` + `'unsafe-inline'`
+Both directives present in the CSP make any XSS vulnerability directly exploitable without CSP bypass.
+
+### 3. BEX API HMAC Authentication
+Custom `X-BEX-Key`, `X-BEX-Signature`, `X-BEX-Timestamp` headers suggest HMAC-SHA256 API auth for programmatic trading. If signing algorithm is weak or key generation is predictable, could forge API requests.
+
+### 4. WebSocket Data Leakage
+`wss://ws-dev.bumba.global` — separate nginx origin (not behind Cloudflare). Check if WebSocket connections leak orderbook data or user information.
+
+### 5. Kill Switch / Circuit Breaker Abuse
+If admin access is obtained, kill switch functionality could halt trading or trigger liquidations.
+
+### 6. Dual Control Bypass
+Approval system for withdrawals could have race conditions or bypasses.
+
+---
+
 ## Next Steps
 
-1. Register account (bypass CAPTCHA if possible)
-2. Test authenticated API endpoints (orders, wallet, account)
-3. Check WebSocket for data leakage
-4. Investigate admin API rewrites with different approaches
-5. Test for IDOR in trading/account endpoints
-6. Check for SSTI / Prototype Pollution in Next.js
-7. Test SSRF via `http://localhost:*` CSP allowance
-8. Scan for more S3 buckets using permutation patterns
+1. Register account (bypass Turnstile CAPTCHA if possible)
+2. Test authenticated API endpoints with JWT (orders, wallet, account, trades)
+3. Deep-dive WebSocket (`wss://ws-dev.bumba.global`) for data leakage
+4. Test FNS login / sandbox-auth for auth bypass
+5. Investigate Fireblocks/treasury 530 errors (origin IP discovery)
+6. Check b2c2-hedging-adapter and coinbase-hedging-adapter for CORS/API exposure
+7. Test admin login via `/api/v1/participants/auth/login` with different path patterns
+8. Test for SSTI/Prototype Pollution in Next.js
+9. SSRF testing via the `http://localhost:*` CSP allowance (if we find a vector)
+10. Check if `/admin.status.bumba.global` (nginx/1.27.2) has known CVEs
