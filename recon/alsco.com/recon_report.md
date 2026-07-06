@@ -13,11 +13,21 @@
 | Domain | Type | IP / Hosting | Notes |
 |--------|------|-------------|-------|
 | `alsco.net` | Marketing site | Cloudflare (104.21.64.16, 172.67.174.27) | TXT: h1-domain-verification, SPF, Google/AbuseIPDB/FB verification |
-| `www.alsco.net` | Marketing site | Cloudflare (same as alsco.net) | Same as alsco.net |
-| `alsco.com` | Landing page | Netlify (13.215.239.219, 52.74.6.109) | Redirects to https://alsco.com/ (Netlify) |
-| `www.alsco.com` | Landing page | Netlify (same as alsco.com) | Redirects to https://alsco.com/ |
-| `api.alsco.com` | API endpoint | IIS/10.0 + ASP.NET (65.121.181.75) | Origin server, CenturyLink, Murray UT |
-| `portal.alscotoday.com` | **Secure Gateway® App** | Cloudflare (104.21.21.39, 172.67.196.95) | Main in-scope asset — SG product interface |
+| `www.alsco.net` | Marketing site | Cloudflare | Same as alsco.net |
+| `alsco.com` | Landing page | Netlify | Redirects to https://alsco.com/ |
+| `www.alsco.com` | Landing page | Netlify (13.215.239.219, 52.74.6.109) | Redirects to https://alsco.com/ |
+| `api.alsco.com` | API | IIS/10.0 + ASP.NET (65.121.181.75) | Origin server, CenturyLink, Murray UT. Cert: *.alsco.com (Amazon Trust) |
+| `portal.alscotoday.com` | **Secure Gateway® App** | Cloudflare → nginx → IIS/10.0 | Main in-scope asset. JS challenge WAF. |
+| `smtp.alsco.com` | SMTP Server | 65.121.181.71 | No HTTP response. Likely E-Mail Secure Gateway. |
+
+### Related Domains (Not ALSCO-owned)
+
+| Domain | Status | Notes |
+|--------|--------|-------|
+| `alsco.cloud` | Cloudflare 403 | Behind Cloudflare, same as main site |
+| `alsco.co` | Cloudflare 403 | Behind Cloudflare |
+| `alsco.org` | For sale (5.8.93.86) | Domain squatter, openresty/1.31.1.1 |
+| `alsco.us` | No response | Unreachable |
 
 ### Infrastructure Map
 
@@ -28,18 +38,27 @@ portal.alscotoday.com
       → IIS/10.0 + ASP.NET (origin at 65.121.181.75, CenturyLink)
 
 api.alsco.com → 65.121.181.75 (same origin, IIS/10.0 + ASP.NET)
+smtp.alsco.com → 65.121.181.71 (SMTP, no HTTP)
 
-alsco.com → Netlify (static marketing)
+alsco.com → Netlify (static landing page)
 alsco.net → Cloudflare (marketing blog)
 ```
 
-### DNS Records (alsco.net)
+### DNS Records
 
+**alsco.net** (Cloudflare):
 ```
 A:    104.21.64.16, 172.67.174.27
 MX:   route1/2/3.mx.cloudflare.net
 NS:   casey.ns.cloudflare.com, sarah.ns.cloudflare.com
 TXT:  h1-domain-verification=MbFYxRbo..., SPF, google-site-verification, etc.
+```
+
+**Origin (65.121.181.75) — CenturyLink (AS209), Murray UT:**
+```
+Server: Microsoft-IIS/10.0
+X-Powered-By: ASP.NET
+Certificate: *.alsco.com (Amazon Trust Services)
 ```
 
 ---
@@ -56,6 +75,7 @@ TXT:  h1-domain-verification=MbFYxRbo..., SPF, google-site-verification, etc.
 | Backend Framework | **ASP.NET** | `X-Powered-By: ASP.NET` on origin |
 | SG Engine | **Secure Gateway®** | `X-Server-Powered-By: Secure Gateway®`, `X-Secure_Gateway_ID` headers |
 | Base URL | `/msg/` | All app resources served from this path |
+| WAF Rules | **ModSecurity CRS + Custom** | G.S.13, G.S.920180 (CRS rule), G.S.920600 (CRS rule) |
 
 ### Security Headers (Observed)
 
@@ -68,8 +88,39 @@ X-XSS-Protection: 1; mode=block
 Content-Security-Policy: default-src 'self'; script-src 'self' 'strict-dynamic' ...
 Permissions-Policy: geolocation=(), camera=(), microphone=(), interest-cohort=()
 Expect-CT: enforce; max-age=3600
-Feature-Policy: accelerometer 'none'; ...
 ```
+
+---
+
+## WAF Behavior Analysis
+
+### Error Code Matrix
+
+| Method | Path | Status | err | Rule | Notes |
+|--------|------|--------|-----|------|-------|
+| GET | `/msg/` | 200 | — | — | Block page (Cloudflare JS challenge) |
+| GET | `/*` | 200/302 | 22 | G.S.13 | General GET block |
+| HEAD | `/*` | 403 | — | — | Blocked at edge |
+| POST | `/*` | 302 | **23** | **G.S.920180** | Content-Type policy (ModSecurity CRS) |
+| PUT/PATCH/DELETE | `/*` | 403 | — | — | Blocked at edge |
+| OPTIONS | `/*` | 403 | — | — | Blocked at edge |
+| TRACE | `/*` | 405 | — | — | Reached backend (IIS) |
+| POST + `application/x-www-form-urlencoded` | `/*` | 302 | 23 | G.S.920180 | Same as no CT |
+| POST + `multipart/form-data` | `/*` | 302 | 23 | G.S.920180 | Same |
+
+### Rule IDs Identified
+
+| Rule | ModSecurity CRS Match | Description |
+|------|----------------------|-------------|
+| G.S.13 | — (custom) | General GET block |
+| G.S.920180 | 920180 | Content-Type request header inspection |
+| G.S.920600 | 920600 | Request body limit / POST parameter limit |
+
+### Block Page Annotations
+- `[AS] (F5)` — "Automated Security"? F5 Networks BIG-IP?
+- `[B] (F3)` — Different block mode (observed in Wayback Dec 2023)
+- Transaction ID format: `8e07297d3adaa990b3b2a19991fb2782` (MD5 hash)
+- SG_ID format: `178329694362.361644` (epoch timestamp + counter)
 
 ---
 
@@ -77,72 +128,75 @@ Feature-Policy: accelerometer 'none'; ...
 
 ### F1 — Server Header Leaks "S.G WebServer" (Internal Name)
 - **Endpoint:** `https://portal.alscotoday.com/clientarea.php`
-- First redirect response contains `Server: <center><br>S.G WebServer<br></center>`
-- This reveals that the internal codename for the Secure Gateway webserver is "S.G WebServer"
-- Likely a custom nginx build or branded server
+- `Server: <center><br>S.G WebServer<br></center>` in nginx 302 response
+- Internal codename for the Secure Gateway webserver
 
 ### F2 — Secure Gateway Headers Leak Internal ID
-- `x-server-powered-by: Secure Gateway®` — confirms product name
-- `x-secure_gateway_id` header present in all responses with a hash value
-  - Example: `a8c9f265fb643dd95083098ffedf12b4`
-- These headers could help fingerprint the SG version/instance
+- `x-server-powered-by: Secure Gateway®`
+- `x-secure_gateway_id: a8c9f265fb643dd95083098ffedf12b4`
+- Each request gets a unique SG_ID hash
 
 ### F3 — Cloudflare JS Challenge with IP/Transaction ID Leak
-- App enforces Cloudflare JS challenge for all `/msg/` paths
-- Block page HTML leaks:
-  - **Client IP:** `35.221.174.247` (our IP)
-  - **Transaction ID:** `8e07297d3adaa990b3b2a19991fb2782`
-  - Also shown in HTML comment: `20260706-031728` (date-based ID)
-- Error code: `G.S.13` (Gateway Security Rule #13)
-- Error message: "Error, 403 - Access Denied [AS] (F5)"
+- Block page leaks client IP and Transaction ID in HTML comments
+- Error: "403 - Access Denied [AS] (F5)"
+- Timer-based retry (30 second cooldown)
 
-### F4 — Origin Server IP Exposed via api.alsco.com
-- `api.alsco.com` resolves directly to `65.121.181.75` (IIS/10.0)
-- This bypasses Cloudflare protection for this hostname
-- Running on CenturyLink (AS209) in Murray, Utah
-- Certificate SAN: `*.alsco.com`
+### F4 — ModSecurity CRS Rules Confirm WAF Stack
+- Rules G.S.920180 and G.S.920600 map to OWASP ModSecurity CRS rule IDs
+- Confirms ModSecurity running behind Cloudflare
 
-### F5 — Common WHMCS URL Patterns Present
-- `/clientarea.php`, `/cart.php` paths respond (redirects to SG)
-- Suggests portal uses WHMCS integrated with Secure Gateway
+### F5 — POST Method Reaches Different WAF Rule
+- POST triggers err=23 / G.S.920180 instead of err=22 / G.S.13
+- Different Content-Types do not change the rule triggered
+- Suggests POST is handled differently at the WAF level
 
-### F6 — No Subdomain Takeover Candidates Found
-- Checked common subdomains for both alsco.net and alsco.com
-- All resolved subdomains return valid HTTP responses (not available for takeover)
+### F6 — Origin IP Exposed via api.alsco.com
+- `api.alsco.com` resolves directly to 65.121.181.75 (bypasses Cloudflare)
+- Certificate: `*.alsco.com` issued by Amazon Trust Services
+- Origin only responds 403/404 for all paths
+
+### F7 — E-Mail Gateway Server Found
+- `smtp.alsco.com` → 65.121.181.71 (different IP)
+- No HTTP services detected, likely SMTP-only
+
+### F8 — WHMCS Integration Detected (Historical)
+- Wayback Machine shows `/go/clientarea.php`, `/go/cart.php`, `/go/cart.php?a=add&pid=NNN`
+- WHMCS client area was served under `/go/` path
+- Currently all WHMCS paths blocked by WAF
 
 ---
 
-## Cloudflare WAF Bypass Attempts
+## Bypass Attempts Summary
 
-### Block Baseline
-- Normal request to portal → Cloudflare JS challenge (30s timer)
-- Error 403 with `[AS] (F5)` — suggests F5 BIG-IP ASM or similar WAF integrated with Cloudflare
-
-### Origin Direct Access
-- `65.121.181.75:80/443` with `Host: portal.alscotoday.com` → 403 Forbidden (IIS)
-- `65.121.181.75:80/443` with `Host: api.alsco.com` → 403 Forbidden (IIS)
+| Technique | Result |
+|-----------|--------|
+| Header injection (X-Forwarded-For, etc.) | All 1471 probes blocked |
+| Path encoding (%2e, %252e, etc.) | Blocked |
+| HTTP method tampering | POST gives different error (still blocked) |
+| UA spoofing (Yandex, MJ12bot) | Still blocked |
+| Origin direct access | 403/404 for all vhosts |
+| Alternative ports | No services found beyond 80/443 |
+| Wayback Machine old content | All snapshots show same block page (since Dec 2023) |
 
 ---
 
 ## Potential Attack Vectors
 
-1. **Cloudflare Bypass:** Find the true origin IP (not the CenturyLink one which returns 403 for SG paths)
-2. **WHMCS Vulnerabilities:** If WHMCS is integrated, check for known CVE exploitation
-3. **API Endpoints:** Discover hidden API routes under `/api/`, `/v1/`, `/v2/` on portal
-4. **Path Traversal in `/msg/`:** Check if directory traversal works in SG paths
-5. **IIS Tilde Enumeration:** Check for ASP.NET tilde vulnerability on origin
-6. **ViewState Deserialization:** ASP.NET app — check for viewstate without MAC protection
-7. **Open Redirect:** Check `ReturnUrl` patterns in login flow
-8. **Subdomain Enumeration on *.alsco.com:** Wildcard cert suggests more subdomains exist
+1. **Find true origin IP** — 65.121.181.75 returns 403, likely not the real origin. Cloudflare may proxy to a different backend.
+2. **Solve Cloudflare JS challenge** — Not feasible programmatically; requires browser automation.
+3. **Monitor for new subdomains** — New deployments might bypass WAF initially.
+4. **Look for WHMCS CVEs** — If WHMCS version is identifiable, known CVEs might work.
+5. **Check GitHub/Secret leaks** — ALSCO may have leaked credentials in public repos.
+6. **Secure Gateway product CVEs** — Search for known vulnerabilities in the Secure Gateway software.
 
 ---
 
-## Next Steps
+## Next Steps (Blocked)
 
-- [ ] Run `bypass_403.sh` on `portal.alscotoday.com/msg/`
-- [ ] Enumerate `*.alsco.com` subdomains (wildcard cert)
-- [ ] Check for IIS/ASP.NET specific vulns (ViewState, tilde, traces)
-- [ ] Try to register an account / access any login form directly
-- [ ] Check HackerOne for disclosed ALSCO reports
-- [ ] Look for the Secure Gateway product in CVE databases
-- [ ] Test `api.alsco.com` for API endpoints
+The target (`portal.alscotoday.com` / Secure Gateway) is behind a multi-layered WAF (Cloudflare + ModSecurity + custom rules) that has been in place since at least Dec 2023. No bypass was found after extensive testing. 
+
+**Recommendations:**
+- Set up continuous subdomain monitoring for new ALSCO assets
+- Search for Secure Gateway product documentation/whitepapers for technical insights
+- Check if the Secure Gateway software is available for download (maybe demo/trial version)
+- Consider switching to a different target
